@@ -26,12 +26,23 @@ interface LeadRow {
   email: string;
   status: string;
   description: string;
+  value: number;
   created_at: string;
   updated_at: string;
 }
 
+interface BudgetRow {
+  id: number;
+  month: string;
+  type: string;
+  label: string;
+  amount: number;
+  created_at: string;
+}
+
 const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 const STATUSES = ["new", "contacted", "qualified", "won", "lost"] as const;
+const BUDGET_TYPES = ["spending", "made", "lost"] as const;
 
 const encoder = new TextEncoder();
 
@@ -105,6 +116,21 @@ function normalizeStatus(value: unknown): string {
   return (STATUSES as readonly string[]).includes(s) ? s : "new";
 }
 
+function normalizeBudgetType(value: unknown): string {
+  const s = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (BUDGET_TYPES as readonly string[]).includes(s) ? s : "spending";
+}
+
+/** Parse a non-negative money amount; rounds to 2 decimals, clamped to max. */
+function parseMoney(raw: unknown): { ok: boolean; amount: number } {
+  if (raw === "" || raw === null || raw === undefined) return { ok: true, amount: 0 };
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) return { ok: false, amount: 0 };
+  return { ok: true, amount: Math.min(Math.round(num * 100) / 100, 1e12) };
+}
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 function clamp(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
@@ -158,7 +184,7 @@ function withCors(res: Response, cors: HeadersInit): Response {
 // Validation
 // ---------------------------------------------------------------------------
 
-type LeadPatch = { name?: string; phone?: string; email?: string; status?: string; description?: string };
+type LeadPatch = { name?: string; phone?: string; email?: string; status?: string; description?: string; value?: number };
 
 function parseLeadInput(body: unknown, partial: boolean): { patch: LeadPatch; errors: string[] } {
   const errors: string[] = [];
@@ -176,6 +202,11 @@ function parseLeadInput(body: unknown, partial: boolean): { patch: LeadPatch; er
   if (!partial || "email" in input) patch.email = clamp(input.email, 200);
   if (!partial || "description" in input) patch.description = clamp(input.description, 2000);
   if (!partial || "status" in input) patch.status = normalizeStatus(input.status);
+  if (!partial || "value" in input) {
+    const money = parseMoney(input.value);
+    if (!money.ok) errors.push("Deal value must be a non-negative number");
+    else patch.value = money.amount;
+  }
 
   // Basic email sanity: only flag if non-empty and obviously wrong.
   if (patch.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(patch.email)) {
@@ -203,14 +234,14 @@ async function authed(
 
 async function listLeads(env: EnvWithVars): Promise<LeadRow[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, name, phone, email, status, description, created_at, updated_at FROM leads ORDER BY id DESC"
+    "SELECT id, name, phone, email, status, description, value, created_at, updated_at FROM leads ORDER BY id DESC"
   ).all<LeadRow>();
   return results ?? [];
 }
 
 async function getLeadById(env: EnvWithVars, id: number): Promise<LeadRow | null> {
   return await env.DB.prepare(
-    "SELECT id, name, phone, email, status, description, created_at, updated_at FROM leads WHERE id = ?"
+    "SELECT id, name, phone, email, status, description, value, created_at, updated_at FROM leads WHERE id = ?"
   )
     .bind(id)
     .first<LeadRow>();
@@ -222,6 +253,7 @@ const LEAD_COLUMNS: Record<keyof LeadPatch, string> = {
   email: "email",
   status: "status",
   description: "description",
+  value: "value",
 };
 
 function applyPatch(patch: LeadPatch): { setClauses: string[]; values: unknown[] } {
@@ -286,9 +318,16 @@ async function handleRequest(req: Request, env: EnvWithVars, cors: HeadersInit):
       return errorResponse(errors[0] ?? "Name is required", 400, cors);
     }
     const { meta } = await env.DB.prepare(
-      "INSERT INTO leads (name, phone, email, status, description) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO leads (name, phone, email, status, description, value) VALUES (?, ?, ?, ?, ?, ?)"
     )
-      .bind(patch.name, patch.phone ?? "", patch.email ?? "", normalizeStatus(patch.status), patch.description ?? "")
+      .bind(
+        patch.name,
+        patch.phone ?? "",
+        patch.email ?? "",
+        normalizeStatus(patch.status),
+        patch.description ?? "",
+        patch.value ?? 0
+      )
       .run();
     const lead = await getLeadById(env, Number(meta.last_row_id));
     if (!lead) return errorResponse("Lead created but could not be read back", 500, cors);
@@ -322,6 +361,102 @@ async function handleRequest(req: Request, env: EnvWithVars, cors: HeadersInit):
     if (method === "DELETE") {
       const result = await env.DB.prepare("DELETE FROM leads WHERE id = ?").bind(id).run();
       if (!result.meta.changes) return errorResponse("Lead not found", 404, cors);
+      return json({ ok: true }, 200, cors);
+    }
+  }
+
+  // --- Budget tracking -----------------------------------------------------
+
+  async function listBudget(): Promise<BudgetRow[]> {
+    const { results } = await env.DB.prepare(
+      "SELECT id, month, type, label, amount, created_at FROM budget_entries ORDER BY month DESC, id DESC"
+    ).all<BudgetRow>();
+    return results ?? [];
+  }
+
+  async function getBudgetById(id: number): Promise<BudgetRow | null> {
+    return await env.DB.prepare("SELECT id, month, type, label, amount, created_at FROM budget_entries WHERE id = ?")
+      .bind(id)
+      .first<BudgetRow>();
+  }
+
+  function parseBudgetInput(body: unknown, partial: boolean): { patch: Record<string, unknown>; errors: string[] } {
+    const errors: string[] = [];
+    const input = (body ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+
+    if (!partial || "month" in input) {
+      const month = clamp(input.month, 7);
+      if (!MONTH_RE.test(month)) errors.push("Month must be in YYYY-MM format");
+      else patch.month = month;
+    }
+    if (!partial || "type" in input) patch.type = normalizeBudgetType(input.type);
+    if (!partial || "label" in input) patch.label = clamp(input.label, 200);
+    if (!partial || "amount" in input) {
+      const money = parseMoney(input.amount);
+      if (!money.ok) errors.push("Amount must be a non-negative number");
+      else patch.amount = money.amount;
+    }
+    return { patch, errors };
+  }
+
+  if (method === "GET" && path === "/api/budget") {
+    return json(await listBudget(), 200, cors);
+  }
+
+  if (method === "POST" && path === "/api/budget") {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return errorResponse("Invalid JSON body", 400, cors);
+    }
+    const { patch, errors } = parseBudgetInput(body, false);
+    if (errors.length) return errorResponse(errors[0], 400, cors);
+    const { meta } = await env.DB.prepare(
+      "INSERT INTO budget_entries (month, type, label, amount) VALUES (?, ?, ?, ?)"
+    )
+      .bind(String(patch.month), normalizeBudgetType(patch.type), String(patch.label ?? ""), Number(patch.amount ?? 0))
+      .run();
+    const entry = await getBudgetById(Number(meta.last_row_id));
+    if (!entry) return errorResponse("Entry created but could not be read back", 500, cors);
+    return json(entry, 201, cors);
+  }
+
+  const budgetMatch = path.match(/^\/api\/budget\/(\d+)$/);
+  if (budgetMatch) {
+    const id = Number(budgetMatch[1]);
+
+    if (method === "PATCH") {
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return errorResponse("Invalid JSON body", 400, cors);
+      }
+      const { patch, errors } = parseBudgetInput(body, true);
+      if (errors.length) return errorResponse(errors[0], 400, cors);
+      const setClauses: string[] = [];
+      const values: unknown[] = [];
+      for (const key of ["month", "type", "label", "amount"] as const) {
+        if (patch[key] !== undefined) {
+          setClauses.push(`${key} = ?`);
+          values.push(patch[key]);
+        }
+      }
+      if (!setClauses.length) return errorResponse("Nothing to update", 400, cors);
+      const result = await env.DB.prepare(`UPDATE budget_entries SET ${setClauses.join(", ")} WHERE id = ?`)
+        .bind(...values, id)
+        .run();
+      if (!result.meta.changes) return errorResponse("Entry not found", 404, cors);
+      const entry = await getBudgetById(id);
+      if (!entry) return errorResponse("Entry not found", 404, cors);
+      return json(entry, 200, cors);
+    }
+
+    if (method === "DELETE") {
+      const result = await env.DB.prepare("DELETE FROM budget_entries WHERE id = ?").bind(id).run();
+      if (!result.meta.changes) return errorResponse("Entry not found", 404, cors);
       return json({ ok: true }, 200, cors);
     }
   }

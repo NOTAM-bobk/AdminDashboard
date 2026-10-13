@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   DEMO_MODE,
   STATUSES,
   STATUS_META,
-  asStatus,
   api,
+  fmtMoney,
+  asStatus,
   type Lead,
   type LeadInput,
   type LeadStatus,
@@ -12,13 +13,19 @@ import {
 import LeadModal from "./LeadModal";
 import ConfirmModal from "./ConfirmModal";
 
+// Budget view (and its chart library) loads on demand — keeps mobile initial load small.
+const BudgetView = lazy(() => import("./BudgetView"));
+
 type ModalState =
   | { kind: "none" }
   | { kind: "new" }
   | { kind: "edit"; lead: Lead }
   | { kind: "delete"; lead: Lead };
 
+type Tab = "leads" | "budget";
+
 export default function Dashboard({ onLogout }: { onLogout: () => void }) {
+  const [tab, setTab] = useState<Tab>("leads");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,24 +126,32 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
     <div className="min-h-full bg-neutral-50">
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-neutral-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-6 w-6 items-center justify-center rounded bg-neutral-900">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:px-6">
+          <div className="flex items-center gap-2">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-neutral-900">
               <svg width="12" height="12" viewBox="0 0 100 100" aria-hidden="true">
                 <path d="M50 15 90 85 10 85Z" fill="white" />
               </svg>
             </div>
-            <span className="text-sm font-semibold tracking-tight text-neutral-900">Leads</span>
+            <span className="hidden text-sm font-semibold tracking-tight text-neutral-900 sm:inline">Leads</span>
           </div>
-          <div className="flex items-center gap-3">
+          <nav className="flex min-w-0 items-center gap-0.5 rounded-md border border-neutral-200 bg-white p-0.5">
+            <NavTab active={tab === "leads"} onClick={() => setTab("leads")}>
+              Leads
+            </NavTab>
+            <NavTab active={tab === "budget"} onClick={() => setTab("budget")}>
+              Budget
+            </NavTab>
+          </nav>
+          <div className="ml-auto flex items-center gap-2">
             {DEMO_MODE && (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+              <span className="hidden rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 sm:inline">
                 Demo mode
               </span>
             )}
             <button
               onClick={onLogout}
-              className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+              className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
             >
               Log out
             </button>
@@ -144,116 +159,137 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        {/* Stats */}
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <StatCard label="All leads" value={leads.length} dot="bg-neutral-900" />
-          {(STATUSES as LeadStatus[]).map((s) => (
-            <StatCard key={s} label={STATUS_META[s].label} value={counts[s]} dot={STATUS_META[s].dot} />
-          ))}
-        </div>
-
-        {/* Toolbar */}
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search leads…"
-            className="w-full max-w-xs rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400 focus:outline-none"
-          />
-          <div className="flex gap-1 rounded-md border border-neutral-200 bg-white p-1">
-            <FilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
-              All
-            </FilterChip>
-            {(STATUSES as LeadStatus[]).map((s) => (
-              <FilterChip key={s} active={statusFilter === s} onClick={() => setStatusFilter(s)}>
-                {STATUS_META[s].label}
-              </FilterChip>
-            ))}
-          </div>
-          <div className="ml-auto">
-            <button
-              onClick={() => setModal({ kind: "new" })}
-              className="rounded-md bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700"
-            >
-              + Add lead
-            </button>
-          </div>
-        </div>
-
+      <main className="mx-auto max-w-6xl px-3 py-6 sm:px-6 sm:py-8">
         {error && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        {/* Table */}
-        <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-          {loading ? (
-            <div className="divide-y divide-neutral-100">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 px-4 py-4 sm:px-6">
-                  <div className="h-4 w-36 animate-pulse rounded bg-neutral-100" />
-                  <div className="h-4 w-24 animate-pulse rounded bg-neutral-100" />
-                  <div className="ml-auto h-4 w-16 animate-pulse rounded bg-neutral-100" />
-                </div>
+        {tab === "leads" ? (
+          <>
+            {/* Stats */}
+            <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
+              <StatCard label="All leads" value={leads.length} dot="bg-neutral-900" />
+              {(STATUSES as LeadStatus[]).map((s) => (
+                <StatCard key={s} label={STATUS_META[s].label} value={counts[s]} dot={STATUS_META[s].dot} />
               ))}
             </div>
-          ) : filtered.length === 0 ? (
-            <EmptyState hasLeads={leads.length > 0} onAdd={() => setModal({ kind: "new" })} />
-          ) : (
-            <ul className="divide-y divide-neutral-100">
-              {filtered.map((lead) => (
-                <li key={lead.id} className="group flex items-center gap-3 px-4 py-3 hover:bg-neutral-50 sm:px-6">
-                  <StatusSelect value={lead.status} onChange={(s) => void handleStatusChange(lead, s)} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium text-neutral-900">{lead.name}</span>
-                    </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-neutral-500">
-                      {lead.phone && <span className="tabular-nums">{lead.phone}</span>}
-                      {lead.email && <span className="truncate">{lead.email}</span>}
-                    </div>
-                    {lead.description && (
-                      <p title={lead.description} className="mt-1 max-w-xl truncate text-xs text-neutral-400">
-                        {lead.description}
-                      </p>
-                    )}
-                  </div>
-                  <span className="hidden shrink-0 text-xs text-neutral-400 sm:block">
-                    {formatDate(lead.created_at)}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                    <IconButton label={`Edit ${lead.name}`} onClick={() => setModal({ kind: "edit", lead })}>
-                      <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                        <path
-                          d="M10.5 2.5l2 2-7.5 7.5H3v-2l7.5-7.5z"
-                          stroke="currentColor"
-                          strokeWidth="1.2"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </IconButton>
-                    <IconButton label={`Delete ${lead.name}`} onClick={() => setModal({ kind: "delete", lead })}>
-                      <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                        <path
-                          d="M2.5 4.5h10M4.5 4.5v7a1 1 0 001 1h4a1 1 0 001-1v-7M6 4.5V3a1 1 0 011-1h1a1 1 0 011 1v1.5"
-                          stroke="currentColor"
-                          strokeWidth="1.2"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </IconButton>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
 
-        <p className="mt-4 text-center text-xs text-neutral-400">
-          {leads.length} lead{leads.length === 1 ? "" : "s"} · backend {DEMO_MODE ? "demo (browser)" : "Cloudflare Worker + D1"}
-        </p>
+            {/* Toolbar */}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search"
+                className="min-w-0 flex-1 rounded-md border border-neutral-200 bg-white px-3 py-2 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400 focus:outline-none sm:max-w-xs sm:text-sm"
+              />
+              <div className="flex gap-1 overflow-x-auto rounded-md border border-neutral-200 bg-white p-1">
+                <FilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
+                  All
+                </FilterChip>
+                {(STATUSES as LeadStatus[]).map((s) => (
+                  <FilterChip key={s} active={statusFilter === s} onClick={() => setStatusFilter(s)}>
+                    {STATUS_META[s].label}
+                  </FilterChip>
+                ))}
+              </div>
+              <button
+                onClick={() => setModal({ kind: "new" })}
+                className="flex-1 whitespace-nowrap rounded-md bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700 sm:flex-none"
+              >
+                + Add lead
+              </button>
+            </div>
+
+            {/* Leads list */}
+            <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+              {loading ? (
+                <div className="divide-y divide-neutral-100">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-4 px-4 py-4 sm:px-6">
+                      <div className="h-4 w-36 animate-pulse rounded bg-neutral-100" />
+                      <div className="h-4 w-24 animate-pulse rounded bg-neutral-100" />
+                      <div className="ml-auto h-4 w-16 animate-pulse rounded bg-neutral-100" />
+                    </div>
+                  ))}
+                </div>
+              ) : filtered.length === 0 ? (
+                <EmptyState hasLeads={leads.length > 0} onAdd={() => setModal({ kind: "new" })} />
+              ) : (
+                <ul className="divide-y divide-neutral-100">
+                  {filtered.map((lead) => (
+                    <li key={lead.id} className="px-3 py-3 transition-colors hover:bg-neutral-50 sm:px-6">
+                      {/* Top row: status + value chip + date + actions (always reachable on touch) */}
+                      <div className="flex items-center gap-2">
+                        <StatusSelect value={lead.status} onChange={(s) => void handleStatusChange(lead, s)} />
+                        {lead.value > 0 && (
+                          <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-xs font-medium tabular-nums text-neutral-700">
+                            {fmtMoney(lead.value)}
+                          </span>
+                        )}
+                        <span className="ml-auto hidden shrink-0 text-xs text-neutral-400 sm:block">
+                          {formatDate(lead.created_at)}
+                        </span>
+                        <div className="ml-auto flex items-center gap-0.5 sm:ml-2">
+                          <IconButton label={`Edit ${lead.name}`} onClick={() => setModal({ kind: "edit", lead })}>
+                            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                              <path
+                                d="M10.5 2.5l2 2-7.5 7.5H3v-2l7.5-7.5z"
+                                stroke="currentColor"
+                                strokeWidth="1.2"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </IconButton>
+                          <IconButton label={`Delete ${lead.name}`} onClick={() => setModal({ kind: "delete", lead })}>
+                            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                              <path
+                                d="M2.5 4.5h10M4.5 4.5v7a1 1 0 001 1h4a1 1 0 001-1v-7M6 4.5V3a1 1 0 011-1h1a1 1 0 011 1v1.5"
+                                stroke="currentColor"
+                                strokeWidth="1.2"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          </IconButton>
+                        </div>
+                      </div>
+                      {/* Details */}
+                      <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                        <span className="text-sm font-medium text-neutral-900">{lead.name}</span>
+                        {lead.phone && <span className="text-xs tabular-nums text-neutral-500">{lead.phone}</span>}
+                        {lead.email && <span className="truncate text-xs text-neutral-500">{lead.email}</span>}
+                        <span className="ml-auto text-xs text-neutral-400 sm:hidden">{formatDate(lead.created_at)}</span>
+                      </div>
+                      {lead.description && (
+                        <p title={lead.description} className="mt-1 max-w-xl truncate text-xs text-neutral-400">
+                          {lead.description}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <p className="mt-4 text-center text-xs text-neutral-400">
+              {leads.length} lead{leads.length === 1 ? "" : "s"} · backend{" "}
+              {DEMO_MODE ? "demo (browser)" : "Cloudflare Worker + D1"}
+            </p>
+          </>
+        ) : (
+          <Suspense
+            fallback={
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-16 animate-pulse rounded-xl bg-neutral-100" />
+                ))}
+              </div>
+            }
+          >
+            <BudgetView leads={leads} onLogout={onLogout} />
+          </Suspense>
+        )}
       </main>
 
       {modal.kind === "new" && (
@@ -277,9 +313,22 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
 
 // ---------------------------------------------------------------------------
 
+function NavTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+        active ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function StatCard({ label, value, dot }: { label: string; value: number; dot: string }) {
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3">
+    <div className="rounded-xl border border-neutral-200 bg-white px-3.5 py-3 sm:px-4">
       <div className="flex items-center gap-1.5">
         <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
         <span className="text-xs font-medium text-neutral-500">{label}</span>
@@ -293,7 +342,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
   return (
     <button
       onClick={onClick}
-      className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+      className={`whitespace-nowrap rounded px-2.5 py-1.5 text-xs font-medium transition-colors sm:py-1 ${
         active ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100"
       }`}
     >
@@ -339,7 +388,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+      className="rounded-md p-2 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
     >
       {children}
     </button>

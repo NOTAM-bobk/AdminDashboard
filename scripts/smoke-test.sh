@@ -63,11 +63,35 @@ echo "ok: POST /api/leads -> $(cat /tmp/smoke-create.json)"
 LEAD_ID=$(sed -n 's/.*"id":\([0-9]*\).*/\1/p' /tmp/smoke-create.json | head -1)
 [ -n "$LEAD_ID" ] || fail "could not extract created lead id"
 
-curl -s -X PATCH -H "$AUTH" -H 'Content-Type: application/json' -d '{"status":"contacted"}' \
+curl -s -X PATCH -H "$AUTH" -H 'Content-Type: application/json' -d '{"status":"contacted","value":500}' \
   "$BASE/api/leads/$LEAD_ID" > /tmp/smoke-patch.json || fail "patch lead"
 echo "ok: PATCH /api/leads/$LEAD_ID -> $(cat /tmp/smoke-patch.json)"
+[ "$(node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{})" 2>/dev/null; true)" ] && true
+grep -q '"value":500' /tmp/smoke-patch.json || fail "deal value not persisted (value should be 500)"
+echo "ok: deal value persisted"
 
 expect_status 404 "DELETE unknown lead" -H "$AUTH" -X DELETE "$BASE/api/leads/99999"
 expect_status 200 "DELETE created lead after patch" -H "$AUTH" -X DELETE "$BASE/api/leads/$LEAD_ID"
+
+# Budget endpoints
+echo "-- budget --"
+expect_status 200 "GET /api/budget" -H "$AUTH" "$BASE/api/budget"
+
+curl -s -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"month":"2026-10","type":"spending","label":"Smoke ads","amount":123.45}' \
+  "$BASE/api/budget" > /tmp/smoke-budget.json || fail "create budget entry"
+echo "ok: POST /api/budget -> $(cat /tmp/smoke-budget.json)"
+
+BUDGET_ID=$(sed -n 's/.*"id":\([0-9]*\).*/\1/p' /tmp/smoke-budget.json | head -1)
+[ -n "$BUDGET_ID" ] || fail "could not extract budget entry id"
+
+curl -s -X PATCH -H "$AUTH" -H 'Content-Type: application/json' -d '{"amount":150,"type":"made"}' \
+  "$BASE/api/budget/$BUDGET_ID" > /tmp/smoke-budget-patch.json || fail "patch budget"
+echo "ok: PATCH /api/budget/$BUDGET_ID -> $(cat /tmp/smoke-budget-patch.json)"
+
+expect_status 400 "POST /api/budget bad month" -H "$AUTH" -H 'Content-Type: application/json' -d '{"month":"2026/10","type":"spending","amount":10}' "$BASE/api/budget"
+expect_status 400 "POST /api/budget bad amount" -H "$AUTH" -H 'Content-Type: application/json' -d '{"month":"2026-10","type":"spending","amount":"abc"}' "$BASE/api/budget"
+expect_status 404 "PATCH unknown budget entry" -H "$AUTH" -H 'Content-Type: application/json' -X PATCH -d '{"amount":1}' "$BASE/api/budget/99999"
+expect_status 200 "DELETE budget entry" -H "$AUTH" -X DELETE "$BASE/api/budget/$BUDGET_ID"
 
 echo "ALL SMOKE TESTS PASSED"

@@ -2,7 +2,15 @@
 
 A minimal lead-tracking dashboard. **Frontend on Vercel** (clean, Vercelesque UI), **backend on Cloudflare Workers + D1** (free tier: Workers free plan + D1 free plan), **one shared password** login.
 
-Fields per lead: **Name** (required), **Phone**, **Email**, **Status** (New / Contacted / Qualified / Won / Lost), and an optional short **Description**.
+Fields per lead: **Name** (required), **Phone**, **Email**, **Status** (New / Contacted / Qualified / Won / Lost), an optional short **Description**, and an optional **Deal value** (money).
+
+The dashboard is **mobile-optimized** (stacked touch-friendly lead cards instead of a table on small screens) and has two tabs:
+
+- **Leads** — search, status filter, stats, inline status changes, add/edit/delete.
+- **Budget** — monthly **spending / made / lost** tracking with charts:
+  - Log manual monthly entries (spending, made, lost) via the form in the Budget tab.
+  - Won and lost leads' deal values feed the "Made" and "Lost" series automatically.
+  - Charts: monthly made/lost/spending bars and a cumulative net line, plus a this-month KPI row.
 
 > Original notes from this repo: *"use this and build a vercel deploy ready dashboard for me to track leads, i can enter contact detils name" · "UI: vercel stylized clean minlisic, sign in password is enviromental table" · "use cloudflare as backend"*
 
@@ -14,7 +22,7 @@ worker/     Cloudflare Worker API + D1 database + migrations
 scripts/    smoke-test.sh — local end-to-end API test
 ```
 
-Without `VITE_API_URL` set, the frontend runs in **demo mode** (password `demo`, data held in the browser) so it can be previewed before Cloudflare is wired up.
+Without `VITE_API_URL` set, the frontend runs in **demo mode** (password `demo`, data held in the browser) so it can be previewed before Cloudflare is wired up. The budget tab works in demo mode too, with seeded monthly entries. Charts load in a separate on-demand bundle, so the first mobile paint stays light.
 
 ## Local dev
 
@@ -38,7 +46,7 @@ cd worker
 npx wrangler login
 npx wrangler d1 create leads-db          # copy the returned database_id…
 # …into worker/wrangler.jsonc  →  d1_databases[0].database_id
-npx wrangler d1 migrations apply leads-db --remote
+npx wrangler d1 migrations apply leads-db --remote   # applies all migrations (including budget)
 npx wrangler secret put APP_PASSWORD     # your shared dashboard password
 npx wrangler secret put SESSION_SECRET   # any long random string (signs session tokens)
 ```
@@ -84,8 +92,12 @@ All routes live under the Worker; everything except `/` and `/api/login` require
 | --- | --- | --- |
 | POST | `/api/login` | `{ password }` → `{ token }` |
 | GET | `/api/leads` | All leads, newest first |
-| POST | `/api/leads` | `{ name, phone?, email?, status?, description? }` |
+| POST | `/api/leads` | `{ name, phone?, email?, status?, description?, value? }` |
 | PATCH | `/api/leads/:id` | Partial update of any lead fields |
 | DELETE | `/api/leads/:id` | Remove a lead |
+| GET | `/api/budget` | All budget entries, newest month first |
+| POST | `/api/budget` | `{ month (YYYY-MM), type (spending\|made\|lost), label?, amount }` |
+| PATCH | `/api/budget/:id` | Partial update of a budget entry |
+| DELETE | `/api/budget/:id` | Remove a budget entry |
 
 Free-tier friendly: D1 free plan covers millions of small reads/writes per day — a personal leads tracker will stay far inside it.

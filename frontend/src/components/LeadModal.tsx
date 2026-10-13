@@ -15,6 +15,9 @@ export default function LeadModal({ mode, lead, busy, onClose, onSave }: LeadMod
   const [email, setEmail] = useState(lead?.email ?? "");
   const [status, setStatus] = useState<LeadStatus>(lead?.status ?? "new");
   const [description, setDescription] = useState(lead?.description ?? "");
+  const [value, setValue] = useState<string>(
+    lead && lead.value > 0 ? String(lead.value) : ""
+  );
   const [error, setError] = useState<string | null>(null);
 
   // Escape closes the dialog.
@@ -34,7 +37,19 @@ export default function LeadModal({ mode, lead, busy, onClose, onSave }: LeadMod
       return;
     }
     setError(null);
-    await onSave({ name: name.trim(), phone, email, status, description });
+    const parsedValue = value.trim() === "" ? 0 : Number(value);
+    if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+      setError("Deal value must be a non-negative number");
+      return;
+    }
+    await onSave({
+      name: name.trim(),
+      phone,
+      email,
+      status,
+      description,
+      value: Math.round(parsedValue * 100) / 100,
+    });
   }
 
   return (
@@ -87,20 +102,34 @@ export default function LeadModal({ mode, lead, busy, onClose, onSave }: LeadMod
               </Field>
             </div>
 
-            <Field label="Status" htmlFor="lead-status">
-              <select
-                id="lead-status"
-                value={status}
-                onChange={(e) => setStatus(e.target.value as LeadStatus)}
-                className={inputClass}
-              >
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {STATUS_META[s].label}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Status" htmlFor="lead-status">
+                <select
+                  id="lead-status"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as LeadStatus)}
+                  className={inputClass}
+                >
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_META[s].label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Deal value" htmlFor="lead-value" hint="Optional">
+                <input
+                  id="lead-value"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="0"
+                  className={inputClass}
+                />
+              </Field>
+            </div>
 
             <Field label="Description" htmlFor="lead-description" hint="Optional">
               <textarea

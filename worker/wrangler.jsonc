@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "leads-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+
+  // Comma-separated list of browser origins allowed to call this API.
+  // Add your production domains here, e.g.:
+  // "ALLOWED_ORIGINS": "http://localhost:5173,https://leads.example.com,https://yourdomain.com"
+  "vars": {
+    "ALLOWED_ORIGINS": "http://localhost:5173"
+  },
+
+  // After `npx wrangler d1 create leads-db`, paste the returned database_id here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "leads-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

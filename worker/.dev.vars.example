@@ -1,0 +1,7 @@
+# Copy this file to .dev.vars for local development (wrangler dev --local).
+# In production, set these as Worker secrets instead:
+#   npx wrangler secret put APP_PASSWORD
+#   npx wrangler secret put SESSION_SECRET
+
+APP_PASSWORD=youcanchange
+SESSION_SECRET=change-me-to-a-long-random-string

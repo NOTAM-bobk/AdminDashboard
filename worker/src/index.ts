@@ -40,7 +40,7 @@ interface BudgetRow {
   created_at: string;
 }
 
-const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 3650; // effectively non-expiring (10 years)
 const STATUSES = ["new", "contacted", "qualified", "won", "lost"] as const;
 const BUDGET_TYPES = ["spending", "made", "lost"] as const;
 

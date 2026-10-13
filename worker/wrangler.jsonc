@@ -8,7 +8,7 @@
   // Add your production domains here, e.g.:
   // "ALLOWED_ORIGINS": "http://localhost:5173,https://leads.example.com,https://yourdomain.com"
   "vars": {
-    "ALLOWED_ORIGINS": "http://localhost:5173"
+    "ALLOWED_ORIGINS": "http://localhost:5173,https://lead.base31.org,https://admindashboard-lilac-theta.vercel.app,https://admindashboard-sawyerbobk563-codes-projects.vercel.app,https://admindashboard-git-main-sawyerbobk563-codes-projects.vercel.app"
   },
 
   // After `npx wrangler d1 create leads-db`, paste the returned database_id here.
@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "leads-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "b5b12e51-540e-450c-aa69-9b5fa5a0d445",
       "migrations_dir": "migrations"
     }
   ]
